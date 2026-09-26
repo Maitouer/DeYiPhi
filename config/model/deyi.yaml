@@ -1,0 +1,95 @@
+# DeYi chain (00-Reconstruct/00_item_semantic_space.md + 01_deyi_encoder.md).
+#
+# This is the only DeYi config. A task entry names the dataset that owns it; the channel
+# list itself is NOT repeated here -- the built dataset (dataset.json) is the authority.
+#
+#   python -m src.model.deyi.cli train --task product --recent 16 --num-interests 4
+#
+# Every value is a default; the CLI overrides all of them. ``recent`` also enters the arm
+# path (single_channel/product/k4_r16), so arms can never collide.
+
+seed: 2026
+task: product
+
+# old/recent boundary. The consumer's ``recent_history`` must carry the same value: it is one
+# setting, expressed once here and once where the arm is read; nothing derives it separately.
+recent:
+  short_video: 32
+  product: 16
+  ad: 16
+
+# 历史长度上限：跟数据侧 cap 走，逐任务声明
+max_history:
+  short_video: 512
+  product: 100
+  ad: 200
+
+log_root: log/model/deyi
+
+data:
+  root: output/data          # pipeline root; the dataset per task comes from tasks.json
+  target: 10                 # future window, equals the data-side target_limit
+
+tasks:
+  short_video:
+    dataset: single_channel
+    target: video
+  ad:
+    dataset: single_channel
+    target: ad
+  product:
+    dataset: single_channel
+    target: product
+
+# ---------------------------------------------------------------- item semantic space
+pca:
+  dim: 1024                  # d; must equal deyi.state_dim (one space, two views)
+  samples: 0                 # 0 = mean/Gram over the whole catalog (exact)
+  block_rows: 16384          # sequential read block for the accumulation pass
+  project_batch_size: 8192   # rows per projection worker batch
+
+deyi:
+  output_root: output/model/deyi
+  item_space: output/model/item/semantic_space
+
+  # ---- encoder shape
+  state_dim: 1024            # = pca.dim
+  num_interests: 4           # K
+  history_layers: 2
+  interest_layers: 2         # L_Q: Discover -> Refine
+  heads: 16
+  ffn: 2048
+  dropout: 0.1
+  temporal_buckets: 64       # half-size of the relative-time bucket table
+  behavior_dim: 5
+  route_dim: 128             # W_R / W_Z width in the recent readout
+  route_temperature: 0.5     # tau_g
+
+  # ---- objective (document defaults)
+  item_temperature: 0.15     # tau_p
+  lambda_user: 0.1
+  lambda_div: 0.01
+  negatives: 2048
+  user_negatives: 8
+
+  # ---- optimisation
+  epochs: 20
+  batch_size: 512
+  micro_batch_size: 256
+  learning_rate: 0.00002
+  weight_decay: 0.01
+  warmup_ratio: 0.02
+  gradient_clip: 1.0
+  validation_fraction: 0.05
+  validation_seed: 2026
+  min_epochs: 3
+  early_stop_patience: 1
+  early_stop_min_delta: 0.001
+  # Device candidate table: rows copied per chunk while the task catalog is normalised onto the
+  # GPU. Row-wise math, so the value is pure memory/IO engineering (short_video's catalog is 12.9M
+  # items; the unchunked build needed two fp32 copies of it).
+  device_candidate_chunk: 1048576
+  load_workers: 8
+  encode_batch_size: 256
+  encode_workers: 4
+  device_candidates: true

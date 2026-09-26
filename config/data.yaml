@@ -1,0 +1,77 @@
+# Recommendation data pipeline.
+#
+# Inputs are the released RecIF assets and stay read-only. Outputs are the shared item table
+# plus two datasets: single_channel keeps only each task's own history channel, multi_channel
+# keeps the paper's cross-domain input H_video + H_ad / H_video + H_product.
+
+source: asset/data/OpenOneRec-RecIF
+embeddings: asset/data/openonerec_multimodal_embedding
+
+output: output/data
+item_dir: items
+log_root: log/data
+
+runtime:
+  workers: 8            # 解码进程数，按准备阶段的 CPU 配额调
+  write_workers: 6      # split 写入并行度
+  arrow_threads: 8
+  progress_interval: 5
+
+rules:
+  # 主域通道的历史长度下限；短于此的行整行丢弃。
+  min_primary_history: 32
+
+datasets:
+  single_channel:
+    short_video:
+      history:
+        - {channel: video, field: hist_video_pid, limit: 512}
+      primary: video
+      target: {field: target_video_pid, limit: 10}
+      test: benchmark_data/video/video_test.parquet
+      test_history: {video: hist_pid}
+      test_target: answer_pid
+      behaviors: [like, follow, forward, longview, not_interested]
+    ad:
+      history:
+        - {channel: ad, field: hist_ad_pid, limit: 200}
+      primary: ad
+      target: {field: target_ad_pid, limit: 10}
+      test: benchmark_data/ad/ad_test.parquet
+      test_history: {ad: hist_ad}
+      test_target: answer_pid
+    product:
+      history:
+        - {channel: product, field: hist_goods_pid, limit: 100}
+      primary: product
+      target: {field: target_goods_pid, limit: 10}
+      test: benchmark_data/product/product_test.parquet
+      test_history: {product: hist_goods}
+      test_target: answer_iid
+
+  multi_channel:
+    # 通道顺序即论文顺序：H_video 在前（列表顺序就是通道顺序）。
+    ad:
+      history:
+        - {channel: video, field: hist_longview_video_list, limit: 100}
+        - {channel: ad, field: hist_ad_pid, limit: 200}
+      primary: ad
+      target: {field: target_ad_pid, limit: 10}
+      test: benchmark_data/ad/ad_test.parquet
+      test_history: {video: hist_longview, ad: hist_ad}
+      test_target: answer_pid
+    product:
+      history:
+        - {channel: video, field: hist_longview_video_list, limit: 100}
+        - {channel: product, field: hist_goods_pid, limit: 100}
+      primary: product
+      target: {field: target_goods_pid, limit: 10}
+      test: benchmark_data/product/product_test.parquet
+      test_history: {video: hist_longview, product: hist_goods}
+      test_target: answer_iid
+
+# 同名任务出现在两个数据集里，这里声明裸任务名（如 --task ad）默认读哪一个。
+# short_video 只存在于 single_channel，无需声明。
+owners:
+  ad: multi_channel
+  product: multi_channel

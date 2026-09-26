@@ -1,0 +1,72 @@
+seed: 2026
+data_dir: output/data
+output_dir: output/model/tiger
+deyi:
+  root: output/model/deyi
+  state_dim: 1024
+# Which dataset the DeYi arm was trained on (the arm path carries it).
+dataset: single_channel
+task: short_video
+mode: full
+# Also the r<R> of the DeYi arm this run reads: one setting, not two.
+recent_history:
+  short_video: 32      # short_video 的 recent
+  product: 16          # single_channel/product 的 recent
+  ad: 16
+
+tasks:
+  short_video:
+    histories: [video]
+    target: video
+  ad:
+    histories: [video, ad]
+    target: ad
+  product:
+    histories: [video, product]
+    target: product
+codebook:
+  width: 2048         # 3 位学习码 + 1 位去重序号都用 2048 进制；下游 4 个位置各 width 的 embedding
+  layers: 3
+  sample_items: 600000    # faiss max_points_per_centroid(256) × width = 524288，600k 已够
+  iterations: 50
+  nredo: 3            # faiss k-means 重启次数（越大越不容易陷入局部最优，耗时线性增长）
+  spherical: false    # 质心保持"簇内单位向量的均值"：单级角度对齐略低，但 3 位前缀区分度好
+                      # （spherical=true 实测会让 91.6% 的 item 依赖第 4 位去重序号、余量仅 8.5%）
+  assignment_batch_size: 262144
+  block_rows: 1024    # 连续块抽样的块宽（顺序 IO 而非 600k 次随机 16KB 读）
+  prefetch_workers: 2 # 全 catalog 分配时的预取线程（与 GPU 计算重叠）
+  space: pca          # text = 4096 维 item 文本；pca = 1024 维 DeYi 投影（需先跑 fit-pca）
+  pca_path: output/model/item/semantic_space/embeddings.npy
+  residual_dtype: float16   # 级间残差精度（float32 可换更高精度，代价是内存/带宽）
+  use_float16: false  # faiss k-means 的 fp16 训练路径（省显存，精度取舍）
+  progress_interval: 5      # 进度行最小间隔（秒）
+
+model:
+  d_model: 256
+  num_heads: 8
+  d_ff: 2048
+  d_kv: 64
+  num_layers: 6
+  dropout: 0.10
+  attn_implementation: rope   # RoPE 取代 T5 的 relative-position bias：mask 退化为 bool padding，
+                              # mem-efficient 内核可用（2435 token 实测 0.11 GiB / 14.2 ms）；
+                              # 设回 eager 即可复现旧 T5 配方做对照
+
+train:
+  global_batch_size: 512     # 4 卡 × micro 128
+  epochs: 10           # 151520/512=296 step/epoch → 2960 步，4 卡下单次作业窗口内可跑完
+  learning_rate: 0.002
+  weight_decay: 0.0001
+  warmup_steps: 500
+  min_lr_ratio: 0.1
+  gradient_clip: 1.0
+  save_every: 1000
+  log_every: 50
+  batching: bucket
+  prefix_sampling: 0.2      # 训练时按比例用模型自己的前缀替换 gold 前缀（抗 exposure bias）
+
+evaluation:
+  split: test
+  beams: 32
+  shard_rows: 1024
+  eval_ks: [1, 5, 10, 20, 32]

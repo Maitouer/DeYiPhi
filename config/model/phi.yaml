@@ -1,0 +1,76 @@
+dataset: single_channel
+# Phi：共享预测词表 + 预测路由（docs/v1_algorithm/02_phi.md, 03_phi.md）
+#
+# 这份配置**不重复** DeYi 的任何设置。任务表、任务所属数据集、old/recent 切分（recent）与
+# 历史上限都来自 deyi_config，因为 phi 消费的是冻结的 DeYi 教师：读错数据集或读错 recent
+# 窗口的 phi 会产出一份看起来正常、实际对不上的词表。
+#
+# 坐标系同样不是 phi 的选择：物品侧一律使用冻结 DeYi item space 的单位语义向量
+#   e(i) = normalize(p(i))        （00_item_semantic_space.md §3.5）
+# 预测温度一律使用 checkpoint 里的 item_temperature（= 01_deyi_encoder.md §11 的 tau_p）。
+# 因此本文件里没有温度、没有 item 表示、没有 A 源，也没有任何"重新定义物品"的旋钮。
+deyi_config: config/model/deyi.yaml
+
+# 产物根：按 <dataset>/<task>/k<K>_r<R> 分层，一个冻结教师一份词表。
+output_dir: output/model/phi
+
+# L：共享预测词表大小。这是 phi 最重要的容量超参数，由 held-out UID 上的下游效果决定，
+# 不由 codebook entropy、也不由最低 fit KL 决定（03_phi.md §10）。建议扫描 64/128/256/512。
+vocabulary: 256
+
+# Stage B：只在 user-balanced reservoir 上估计 predictive geometry。
+reservoir:
+  size: 65536           # S_max：reservoir 状态数上限（每个用户总权重为 1）
+  seed: 2026
+
+estimator:
+  # head：ANN/精确 head 的 M；tail：共享重要性采样池的 N。M+N << |C|。
+  head: 256
+  tail: 1024
+  # 共享 proposal q(i) = lambda * f_fit(i) + (1 - lambda) / |C|；uniform 分量保证 q > 0。
+  proposal_lambda: 0.5
+  # 打分块宽度决定峰值显存（Q x B x 4 字节）与 catalog 读盘次数（S/Q 次全量扫描，每次 28 GB）。
+  # 默认值下 estimate 约需 8 次全量扫描；把 query_block 调大可以线性减少读盘，代价是显存。
+  item_block: 131072
+  query_block: 8192
+  # resident: auto = 显存装得下就把 catalog 常驻（省掉每个 query block 一次全量读盘），
+  # 装不下就退回流式；两条路径的数学相同，只有 IO 不同。
+  resident: auto
+  # calibration：抽 S_cal 个状态做一次 exact full-catalog scan，量出近似误差本身
+  # （|A_hat - A|、moment cosine / relative error、predictive assignment agreement）。
+  calibration: 256
+  # 稳定性控制：head mass 或 tail ESS 低于下限的状态做 adaptive fallback（加大 M/N 重估）。
+  # 注意 head_mass_floor：在百万级 catalog 上，即使 M=256 也只覆盖极小一部分概率质量，
+  # 因此 head mass 低是**构造使然**、不是 estimator 失准。默认关闭该判据，让校准报告
+  # （|A_hat-A|、moment cosine、assignment agreement）来判断精度；tail ESS 仍保留。
+  head_mass_floor: 0.0
+  tail_ess_floor: 64.0
+  fallback_rounds: 2
+  fallback_factor: 2.0
+  # 低于下限的状态占比超过该阈值时，判定是判据设置问题而非"少数困难状态"，跳过 fallback
+  # （避免把整份 reservoir 用 M/N 翻倍重算，既无效又是显存爆点）。
+  fallback_max_fraction: 0.05
+  moment_block: 1024        # head 矩累加的子块（限制 fp32 head 行的峰值显存）
+  device: auto           # auto = 只在真的拿到 GPU 配额时用 GPU；cpu 用于纯 CPU 复跑
+
+codebook:
+  iterations: 25         # Assign -> Update Medoid 交替次数上限
+  seed: 2026
+  exact_normalizer: true # 对最终 L 个 medoid 做一次 exact full-catalog normalizer（§13）
+  held_out_fraction: 0.2 # 按用户切出的 held-out KL 占比（0 = 关闭）
+
+router:
+  hidden: 256            # 2 层 MLP；router 只在离线 tokenization 使用
+  layers: 2
+  epochs: 80
+  batch_size: 4096
+  learning_rate: 0.001
+  weight_decay: 0.0
+  validation_fraction: 0.1   # 按用户切出的 router-validation（报 top-1/2 与 predictive regret）
+  seed: 2026
+
+tokenize:
+  batch_size: 8192
+
+route:
+  batch_size: 2048

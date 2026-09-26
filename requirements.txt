@@ -1,0 +1,23 @@
+# Python packages used by the TIGER + DeYi/Phi pipeline.
+#
+# FAISS is deliberately absent: the SID codebook and the predictive codebook both need the CUDA
+# build, which is distributed through conda (``conda install -c pytorch faiss-gpu``) rather than
+# PyPI. Install it next to this environment, not through pip.
+#
+# Versions below are the ones the reported runs used.
+
+torch==2.7.1                 # CUDA 12.6 build
+numpy==2.2.6
+pandas==3.0.3
+pyarrow==24.0.0
+scipy==1.17.1
+scikit-learn==1.9.0
+safetensors==0.8.0
+omegaconf==2.3.1
+PyYAML==6.0.3
+transformers==4.53.3
+matplotlib                   # figures only (scripts/model/analysis/plot_memory_token.py)
+
+# Development
+pytest==9.1.0
+ruff==0.16.5

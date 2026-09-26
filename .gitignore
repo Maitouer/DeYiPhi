@@ -1,0 +1,28 @@
+# Pipeline output: the item table alone is ~200 GiB. Regenerate it with
+# scripts/data/prepare.sbatch and keep it on a scratch volume.
+/output
+/asset
+/log
+
+# Python and test caches.
+**/__pycache__/
+*.py[cod]
+.pytest*
+.ruff*
+.runtime*
+.coverage
+htmlcov/
+
+# Interpreter scratch that a job may leave in the working directory.
+pymp-*/
+torchelastic_*/
+tmp_*/
+tmp*/
+
+# Editors and local environments.
+.env
+.venv/
+.DS_Store
+.vscode/
+.idea/
+**/.hydra/
